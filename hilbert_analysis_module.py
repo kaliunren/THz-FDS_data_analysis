@@ -28,45 +28,10 @@ from scipy.signal import hilbert
 
 from scipy.optimize import fsolve
 
-d = 0.000522
+d = 0.0001  # 样品厚度
 c = 299792458
 
 plt.close('all')
-
-
-def delete_line(filename, newname, del_line):  # 读取文件删除第del_line行并建立新文件
-    with open(filename, 'r') as old_file:
-        with open(newname, 'w+') as new_file:
-
-            current_line = 0
-
-            # 定位到需要删除的行
-            while current_line < (del_line - 1):
-                old_file.readline()
-                current_line += 1
-
-            # 当前光标在被删除行的行首，记录该位置
-            seek_point = old_file.tell()
-
-            # 设置光标位置
-            new_file.seek(seek_point, 0)
-
-            # 读需要删除的行，光标移到下一行行首
-            old_file.readline()
-
-            # 被删除行的下一行读给 next_line
-            next_line = old_file.readline()
-
-            # 连续覆盖剩余行，后面所有行上移一行
-            while next_line:
-                new_file.write(next_line)
-                next_line = old_file.readline()
-
-            # 写完最后一行后截断文件，因为删除操作，文件整体少了一行，原文件最后一行需要去掉
-            new_file.truncate()
-
-            # ...more code
-
 
 def pre_process(filename='', ifInterp=False, Freq=np.arange(0, 2000, 0.014)):
     "频率单位： GHz  返回插值前，插值后数据：return data, data_interpoint"
@@ -150,9 +115,9 @@ def Smooth_TimeDomain(HilbertResult, dFreq=0.014, Down=2.28, Up=2.38):
     return FreqP1, FreqP2
 
 
-def OpticalValue(freq, FreqSamP1, FreqRefP1, thick=1, DD=17 * np.pi):
+def OpticalValue(freq, FreqSamP1, FreqRefP1, thick=1, DD= 0 ):
     "频率单位：GHz 获取光学常数,\n return T,N"
-    PhaseD = np.angle(FreqSamP1) - np.angle(FreqRefP1)  # 反过来减是由于低频相位翻转
+    PhaseD = -np.angle(FreqSamP1) + np.angle(FreqRefP1)  # 反过来减是由于FFT的锅
     PhaseD = np.unwrap(PhaseD)
     PhaseD = PhaseD + DD
     N = (c / thick / (2 * np.pi) / (freq * 1e9)) * PhaseD + 1
@@ -170,6 +135,8 @@ def StepCalc(a):
 
 def prop(RefFilename="",
          SamFilename="",
+         thick=1,
+         DD=0,
          FreqUp=0,
          FreqDown=0,
          FreqStep=0,
@@ -195,7 +162,10 @@ def prop(RefFilename="",
         FreqStep = StepCalc(dataRefI[:, 0])
     StandardFreq = np.arange(FreqDown, FreqUp, FreqStep)
     print("FreqDown FreqUp FreqStep=", FreqDown, FreqUp, FreqStep)
-    print("TimeSmooth=",TimeSmooth,"FilterSmooth",FilterSmooth)
+    print("TimeSmooth=", TimeSmooth, "FilterSmooth=", FilterSmooth)
+    FileNameClip = "(Down-%f_Up-%f_Step-%f)" % (
+        FreqDown, FreqUp, FreqStep) + "(TimeSmooth=" + str(
+            TimeSmooth) + ")" + "(FilterSmooth=" + str(FilterSmooth) + ")"
     dataRefI = pre_process(filename=RefFilename,
                            ifInterp=True,
                            Freq=StandardFreq)
@@ -212,8 +182,6 @@ def prop(RefFilename="",
 
     plt.figure()
     plt.plot(StandardFreq, np.abs(HerRef1))
-    plt.figure()
-    plt.plot(StandardFreq, np.abs(HerRef1))
     plt.plot(StandardFreq, np.abs(HerSam1))
 
     t, TimeRef = Freq2Time(HerRef1, dFreq=FreqStep, method="IRFFT")
@@ -228,7 +196,7 @@ def prop(RefFilename="",
     plt.axvline(RefTime2, 0, 1, color="g")
     plt.axvline(SamTime1, 0, 1, color="r", linestyle="--")
     plt.axvline(SamTime2, 0, 1, color="y", linestyle="--")
-    plt.xlim(min(RefTime1, SamTime1) - 0.2, max(RefTime1, SamTime1) + 0.2)
+    plt.xlim(min(RefTime1, SamTime1) - 0.2, max(RefTime2, SamTime2) + 0.2)
 
     if TimeSmooth:
         SpecRefS, temp = Smooth_TimeDomain(HilbertResult=HerRef1,
@@ -245,7 +213,7 @@ def prop(RefFilename="",
 
     Both_Smooth_Amp_Hilbert = np.column_stack(
         (StandardFreq, abs(SpecRefS), abs(SpecSamS)))
-    np.savetxt(SamFilename[0:-4] + "-Both_Smooth_Amp_Hilbert.txt",
+    np.savetxt(SamFilename[0:-4] + "-Both_Amp_Hilbert" + FileNameClip + ".txt",
                Both_Smooth_Amp_Hilbert)
 
     plt.figure()
@@ -255,15 +223,20 @@ def prop(RefFilename="",
     T, N = OpticalValue(freq=StandardFreq,
                         FreqSamP1=SpecSamS,
                         FreqRefP1=SpecRefS,
-                        DD=6 * np.pi,
-                        thick=0.846)
+                        thick=thick,
+                        DD=DD)
     plt.figure(99)
     plt.plot(StandardFreq, T)
-    Smooth_T = np.column_stack((StandardFreq, T))
-    np.savetxt(SamFilename[0:-4] + "-Smooth_T.txt", Smooth_T)
+    TT = np.column_stack((StandardFreq, T))
+    np.savetxt(SamFilename[0:-4] + "-T" + FileNameClip + ".txt", TT)
+    TT_Complex = np.column_stack((StandardFreq, SpecSamS / SpecRefS))
+    np.savetxt(SamFilename[0:-4] + "-T(Complex)" + FileNameClip + ".txt",
+               TT_Complex)
     plt.ylim((0, 2))
     plt.figure()
-    plt.scatter(StandardFreq, N)
+    plt.plot(StandardFreq, N)
+    NN = np.column_stack((StandardFreq, N))
+    np.savetxt(SamFilename[0:-4] + "-N" + FileNameClip + ".txt", NN)
     plt.ylim((0, 2))
     plt.show()
     # tt,NT=Freq2Time(HerSam1/HerRef1, dFreq=FreqStep, method="IRFFT")
@@ -272,109 +245,26 @@ def prop(RefFilename="",
 
 
 # %%
+import matplotlib
+matplotlib.rcdefaults()
+matplotlib.use('Qt5Agg')
+# !%matplotlib auto
+# !%matplotlib qt
+
+# %%
 plt.close("all")
 if __name__ == "__main__":
-    prop(RefFilename="20190820_003-N2.txt",
-         SamFilename="20190820_001-water vapour.txt",
-         FreqUp=0,
-         FreqDown=0,
+    prop(RefFilename="20180129_0010.txt",
+         SamFilename="20180129_0009.txt",
+         thick=0.000522,
+         DD=-1 * np.pi,
+         FreqUp=300,
+         FreqDown=100,
          FreqStep=0,
          TimeSmooth=True,
          FilterSmooth=False,
-         SamTime1=2.257,
-         SamTime2=2.375,
-         RefTime1=2.257,
-         RefTime2=2.375)
+         SamTime1=2.28,
+         SamTime2=2.38,
+         RefTime1=2.28,
+         RefTime2=2.38)
 
-# %%
-'''
-from sympy.core.symbol import *
-from sympy import *
-
-T,R,a,ep1,ep2,w,n,k=symbols('T,R,a,ep1,ep2,w,n,k')
-
-
-R=((n-1)**2+k**2)/((n+1)**2+k**2)
-a=2*k*w/c
-f=((1-R)**2*E**(-a*d))/((1-R*E**(-a*d))**2+4*R*E**(-a*d)*(sin(n*w*d/c))**2)-T
-print(f)
-'''
-'''
-import gc
-del Amp_Ref
-del Amp_Sam
-del Ang_Sam
-del Ang_Ref
-del Both_Complex1_Hilbert
-del Both_Complex2_Hilbert
-del Cpx_Ref_Data
-del Cpx_Sam_Data
-del FreqRefP1
-del FreqSamP1
-del Her_Ref
-del Her_Ref2
-del Her_Sam
-del Her_Sam2
-del PhaseD
-del Ref_Fact
-del Ref_I
-del Sam_Fact
-del Sam_I
-del ref_data
-del ref_data_num
-del ref_filename
-del ref_inter
-del sam_data
-del sam_data_num
-del sam_filename
-del sam_inter
-gc.collect()
-'''
-'''
-k0=-np.log(Transmittance*(N+1)**2/(4*N))*c/(2*np.pi*Freq*(10**9)*d)
-
-def f(k,*args): #k消光系数  arg[0]=T,arg[1]=w,arg[2]=n
-    return -args[0] + (-(k**2 + (args[2] - 1)**2)/(k**2 + (args[2] + 1)**2) + 1)**2*np.exp(-3.48240915386871e-12*k*args[1])/(4*(k**2 + (args[2] - 1)**2)*np.exp(-3.48240915386871e-12*k*args[1])*np.sin(1.74120457693435e-12*args[2]*args[1])**2/(k**2 + (args[2] + 1)**2) + (-(k**2 + (args[2] - 1)**2)*np.exp(-3.48240915386871e-12*k*args[1])/(k**2 + (args[2]+ 1)**2) + 1)**2)
-
-
-
-k=np.zeros(len(Freq))
-    
-plt.show()
-
-for i in range(len(Freq)):
-    try:
-        aaa=(Transmittance[i]**2,2*np.pi*Freq[i]*10**9,N[i])
-        k[i]=fsolve(f,x0=k0[i],args=aaa[0:],maxfev=1000,xtol=1e-10)
-    except:
-        k[i]=100
-    print("is",i+1,"/",len(Freq))   
-    
-eps1=N**2-k**2    
-eps2=2*N*k
-plt.figure(4)    
-plt.plot(Freq,eps1)
-plt.plot(Freq,eps2)    
-plt.ylim(0,5)
-
-'''
-'''
-from joblib import Parallel, delayed
-import multiprocessing
-    
-# what are your inputs, and what operation do you want to 
-# perform on each input. For example...
-inputs = range(10) 
-def processInput(i):
-    try:
-        aaa=(Transmittance[i],2*np.pi*Freq[i]*10**9,N[i])
-        k[i]=fsolve(f,x0=k0[i],args=aaa[0:])
-    except:
-        k[i]=100
-    print("is",i)   
-
-num_cores = multiprocessing.cpu_count()
-    
-results = Parallel(n_jobs=num_cores-3)(delayed(processInput)(i) for i in range(len(Freq)))
-
-'''
